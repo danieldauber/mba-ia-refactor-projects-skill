@@ -436,6 +436,302 @@ A skill deve atingir os seguintes mínimos em **todos os 3 projetos**:
 
 ---
 
+## Análise Manual
+
+### Projeto 1 — code-smells-project (Python/Flask — E-commerce API)
+
+| Severidade | Arquivo | Problema |
+|---|---|---|
+| CRITICAL | `app.py:7` | `SECRET_KEY` hardcoded como literal no código-fonte; qualquer acesso ao repositório permite forjar cookies de sessão. |
+| CRITICAL | `app.py:59-78` | Endpoint `/admin/query` executa SQL arbitrário recebido no body sem autenticação — qualquer cliente HTTP pode dropar tabelas ou exfiltrar dados. |
+| CRITICAL | `models.py:28` | 15+ queries constroem SQL por concatenação de string com entradas do request — SQL Injection clássico. |
+| CRITICAL | `controllers.py:289` | Endpoint `/health` retorna `secret_key` no body JSON, expondo a chave de sessão para qualquer chamador. |
+| HIGH | `models.py:122-131` | Senhas armazenadas e comparadas em plaintext no banco; seed inclui `admin123` e `123456` em texto puro. |
+| HIGH | `models.py:235-273` | Regras de desconto (thresholds e taxas) misturadas com queries SQL na mesma função da camada de dados. |
+| HIGH | `models.py:171-233` | N+1 query: consulta uma query por pedido e outra por item dentro de loops aninhados — 601 queries para 100 pedidos de 5 itens. |
+| MEDIUM | `database.py:4-10` | Conexão SQLite global mutável (`global db_connection`) compartilhada entre requisições — corrupção de dados sob carga concorrente. |
+| MEDIUM | `models.py:79-87` | Funções de listagem de usuários incluem campo `senha` (plaintext) na resposta — qualquer cliente pode enumerar todas as senhas. |
+| MEDIUM | `controllers.py:208-210` | Lógica de notificação (`print("ENVIANDO EMAIL...")`) inline dentro do handler de rota — acoplamento de responsabilidades. |
+| LOW | `models.py:257-262` | Magic numbers nos thresholds de desconto (`10000`, `5000`, `1000`, `0.10`, `0.05`, `0.02`) sem constantes nomeadas. |
+| LOW | `controllers.py` (múltiplas) | `print()` usado como logger em toda a camada de controle — sem níveis, timestamps ou roteamento para agregadores. |
+| LOW | `app.py:8` | `DEBUG = True` hardcoded — debugger interativo do Werkzeug habilitado em produção, permitindo execução de código arbitrário. |
+
+### Projeto 2 — ecommerce-api-legacy (Node.js/Express — LMS API)
+
+| Severidade | Arquivo | Problema |
+|---|---|---|
+| CRITICAL | `src/utils.js:1-7` | `dbPass`, `paymentGatewayKey` (prefixo `pk_live_` — chave de produção ativa) e `smtpUser` hardcoded como literais no objeto `config`. |
+| CRITICAL | `src/AppManager.js:18` | Seed insere senha `'123'` em plaintext; `badCrypto` (base64 × 10k, truncado em 10 chars) não é hash criptográfico — reversível trivialmente. |
+| CRITICAL | `src/AppManager.js:80-137` | `GET /api/admin/financial-report` e `DELETE /api/users/:id` sem qualquer verificação de autenticação ou autorização. |
+| HIGH | `src/AppManager.js:83-128` | N+1 exponencial: para cada curso → query de matrículas; para cada matrícula → 2 queries (usuário + pagamento) em callbacks aninhados. |
+| HIGH | `src/AppManager.js:1-141` | God Object: `AppManager` unifica inicialização do banco, registro de rotas, lógica de pagamento, matrículas e audit log em uma única classe. |
+| HIGH | `src/utils.js:9-10` | `globalCache = {}` e `totalRevenue = 0` mutáveis no escopo de módulo — estado vaza entre requisições concorrentes; cache sem eviction. |
+| HIGH | `src/utils.js:17-23` | `badCrypto` não é hash: base64 × 10.000 truncado em 10 chars — espaço de saída mínimo, determinístico, facilmente revertido. |
+| MEDIUM | `src/AppManager.js:45` | Número do cartão (`cc`) e chave de API (`config.paymentGatewayKey`) logados em `console.log` — violação PCI-DSS. |
+| MEDIUM | `src/AppManager.js:131-137` | DELETE de usuário não remove `enrollments` nem `payments` relacionados — integridade referencial quebrada, relatórios financeiros corrompidos. |
+| MEDIUM | `src/AppManager.js:59` | Side effect de cache inline dentro do handler de rota — sem abstração, sem testabilidade. |
+| LOW | `src/AppManager.js`, `src/utils.js` | `console.log` como mecanismo de logging sem níveis, timestamps ou formato estruturado. |
+| LOW | `src/AppManager.js:46` | Magic string `"4"` para detectar bandeira Visa sem constante nomeada nem comentário explicativo. |
+| LOW | `src/app.js:13` | Mensagem de startup com nome informal ("Frankenstein") no caminho de produção — ausência de logging orientado a ambiente. |
+
+### Projeto 3 — task-manager-api (Python/Flask — Task Manager)
+
+| Severidade | Arquivo | Problema |
+|---|---|---|
+| CRITICAL | `app.py:13` | `SECRET_KEY = 'super-secret-key-123'` hardcoded — tokens JWT/sessão podem ser forjados por qualquer pessoa com acesso ao repositório. |
+| CRITICAL | `services/notification_service.py:9-10` | `self.email_password = 'senha123'` e `taskmanager@gmail.com` hardcoded no construtor — credenciais SMTP comprometidas permanentemente. |
+| CRITICAL | `models/user.py:16-25` | `User.to_dict()` inclui `'password': self.password` — hash da senha retornado em toda resposta de usuário. |
+| HIGH | `models/user.py:28-32` | `hashlib.md5(pwd.encode()).hexdigest()` — MD5 sem salt e sem work factor; rainbow tables quebram em segundos. |
+| HIGH | `routes/` (3 arquivos) | Lógica de detecção de overdue e validação de status duplicada verbatim em `task_routes.py`, `user_routes.py` e `report_routes.py`. |
+| HIGH | `routes/report_routes.py:53-68` | N+1: `User.query.all()` seguido de `Task.query.filter_by(user_id=u.id)` dentro de loop — 1 + N queries por requisição. |
+| MEDIUM | Todas as rotas | Nenhum endpoint tem autenticação; `/login` retorna `'fake-jwt-token-' + str(user.id)` nunca validado. |
+| MEDIUM | `routes/report_routes.py:157-223` | CRUD de categorias registrado dentro do blueprint de relatórios — violação de single responsibility. |
+| MEDIUM | `routes/task_routes.py:18-28` | Serialização manual de task inline mesmo existindo `Task.to_dict()` — dois caminhos de serialização divergentes. |
+| MEDIUM | `app.py:34` | `debug=True` hardcoded — debugger interativo Werkzeug ativo em produção. |
+| LOW | Múltiplos arquivos | `print()` em vez de `logging` em rotas e no serviço de notificação. |
+| LOW | `app.py:7` | `import os, sys, json, datetime` — apenas `datetime` é utilizado; mesma redundância em `task_routes.py` e `utils/helpers.py`. |
+| LOW | `routes/user_routes.py:210` | Token fake `'fake-jwt-token-' + str(user.id)` preditível e nunca validado em nenhum endpoint. |
+
+---
+
+## Construção da Skill
+
+### Estrutura do SKILL.md
+
+O `SKILL.md` define três fases sequenciais obrigatórias com comportamento explicitamente imperativo — cada fase tem uma pré-condição (a anterior deve ter concluído) e uma condição de parada (erro não passa em silêncio). A Fase 2 tem um hard stop: a skill imprime o relatório completo e aguarda `y`/`yes` antes de modificar qualquer arquivo. A Fase 3 valida boot + endpoints antes de declarar sucesso.
+
+### Arquivos de referência
+
+| Arquivo | Conteúdo |
+|---|---|
+| `01-project-analysis.md` | Heurísticas de detecção: extensão de arquivo → linguagem, `requirements.txt`/`package.json` → framework e versão, schema SQLite/SQL → tabelas, contagem de imports → domínio. |
+| `02-antipatterns-catalog.md` | 13 anti-patterns com sinais de detecção linha-a-linha, severidade e recomendação. Inclui detecção de APIs deprecated (MD5 → bcrypt, `print` → `logging`, `cursor.execute(string)` → queries parametrizadas). |
+| `03-report-template.md` | Template de relatório com header padronizado, seção de summary (contagem por severidade) e bloco por finding com campos: severidade, arquivo:linha, descrição, impacto, recomendação. |
+| `04-mvc-guidelines.md` | Estrutura-alvo MVC: `src/config/`, `src/models/`, `src/controllers/`, `src/views/`, `src/services/`, `src/middlewares/` — com responsabilidades definidas por camada e regras de dependência (views não acessam models diretamente). |
+| `05-refactoring-playbook.md` | 10 padrões de transformação com exemplos antes/depois: SECRET_KEY → env var, SQL concatenado → parametrizado, MD5 → bcrypt, `print` → `logging`, lógica inline → service, serialização inline → `to_dict()`, global mutable state → request-scoped, N+1 → JOIN, `badCrypto` → `bcrypt.hash`, DEBUG hardcoded → env var. |
+
+### Agnóstica de tecnologia
+
+A agnósia de tecnologia foi garantida por três decisões de design:
+
+1. A Fase 1 detecta stack dinamicamente (lê `requirements.txt`, `package.json`, extensões de arquivo) e passa essa informação como contexto para as fases seguintes — a skill não assume Python nem Node.
+2. O catálogo de anti-patterns cobre padrões que existem em ambas as stacks (credenciais hardcoded, N+1, God Object, falta de autenticação) com sinais de detecção específicos por linguagem quando necessário.
+3. O playbook de refatoração inclui exemplos antes/depois para Python e JavaScript nos padrões que diferem entre as duas linguagens.
+
+### Desafios e soluções
+
+- **Projeto 3 já tinha camadas parciais:** A skill precisava detectar que `models/`, `routes/`, `services/` existiam mas ainda tinham problemas internos. Solução: a Fase 1 mapeia a arquitetura atual explicitamente e a Fase 2 audita o conteúdo dos arquivos, não apenas sua existência.
+- **Remoção de legados após migração:** Na primeira execução, a Fase 3 criou o `src/` mas não removeu os arquivos originais. Solução: o SKILL.md foi atualizado com uma etapa explícita de remoção de legados com critérios precisos (arquivo totalmente migrado + validação aprovada) e atualização obrigatória do README com o novo entry point.
+
+---
+
+## Resultados
+
+### Resumo dos relatórios de auditoria
+
+| Projeto | CRITICAL | HIGH | MEDIUM | LOW | Total |
+|---|---|---|---|---|---|
+| code-smells-project | 4 | 3 | 3 | 3 | 13 |
+| ecommerce-api-legacy | 3 | 4 | 3 | 3 | 13 |
+| task-manager-api | 3 | 3 | 4 | 3 | 13 |
+
+### Comparação antes/depois
+
+#### code-smells-project
+
+| Antes | Depois |
+|---|---|
+| 4 arquivos monolíticos (~560 linhas) | `src/` com config, models, controllers, views, services, middlewares |
+| SQL Injection por concatenação | Queries parametrizadas com `?` placeholders |
+| SECRET_KEY e DEBUG hardcoded | Lidos de variáveis de ambiente via `config/settings.py` |
+| Senhas em plaintext | `werkzeug.security.generate_password_hash` (bcrypt) |
+| Endpoint `/admin/query` executando SQL arbitrário | Endpoint removido |
+| `print()` como logger | `logging.getLogger(__name__)` por módulo |
+
+#### ecommerce-api-legacy
+
+| Antes | Depois |
+|---|---|
+| 3 arquivos (God Object `AppManager`) | `src/` com models, controllers, routes, services |
+| Chave de pagamento `pk_live_` e senha SMTP hardcoded | Lidas de `process.env` com `.env.example` documentado |
+| `badCrypto` (base64 truncado) | `bcrypt.hash` / `bcrypt.compare` |
+| N+1 exponencial em relatório financeiro | JOIN único com agregação em JavaScript |
+| Número de cartão logado em plaintext | Log removido; apenas últimos 4 dígitos registrados |
+| Estado global mutável (`globalCache`, `totalRevenue`) | Request-scoped; cache isolado por requisição |
+
+#### task-manager-api
+
+| Antes | Depois |
+|---|---|
+| `app.py` + `models/` + `routes/` + `services/` + `utils/` na raiz | `src/` com config, models, controllers, views, services, middlewares |
+| `SECRET_KEY = 'super-secret-key-123'` hardcoded | `os.environ.get('SECRET_KEY')` em `src/config/settings.py` |
+| MD5 sem salt para senhas | `werkzeug.security.generate_password_hash` (scrypt/bcrypt) |
+| `User.to_dict()` retornava campo `password` | Campo `password` removido de `to_dict()` |
+| Credenciais SMTP hardcoded em `NotificationService.__init__` | Lidas de env vars; stub automático se `SMTP_USER` vazio |
+| `print()` em rotas e serviços | `logging.getLogger(__name__)` por módulo |
+| Lógica de overdue duplicada em 3 arquivos | Centralizada em `services/task_service.py` |
+
+### Checklist de validação
+
+#### Projeto 1 — code-smells-project
+
+**Fase 1 — Análise**
+- [x] Linguagem detectada: Python
+- [x] Framework detectado: Flask
+- [x] Domínio: E-commerce API (produtos, pedidos, usuários)
+- [x] 4 arquivos analisados
+
+**Fase 2 — Auditoria**
+- [x] Relatório segue o template definido
+- [x] Cada finding tem arquivo e linhas exatos
+- [x] Findings ordenados por severidade
+- [x] 13 findings identificados (≥ 5)
+- [x] Detecção de APIs deprecated incluída (MD5, `print`, queries concatenadas)
+- [x] Skill pausou e pediu confirmação antes da Fase 3
+
+**Fase 3 — Refatoração**
+- [x] Estrutura de diretórios segue padrão MVC
+- [x] Configuração extraída para `config/settings.py` (sem hardcoded)
+- [x] Models criados por domínio
+- [x] Views/Routes separadas
+- [x] Controllers concentram o fluxo
+- [x] Error handling centralizado em middleware
+- [x] Entry point claro: `src/app.py`
+- [x] Aplicação inicia sem erros
+- [x] Endpoints originais respondem corretamente
+
+#### Projeto 2 — ecommerce-api-legacy
+
+**Fase 1 — Análise**
+- [x] Linguagem detectada: JavaScript (Node.js)
+- [x] Framework detectado: Express 4.18.2
+- [x] Domínio: LMS API com fluxo de checkout
+- [x] 3 arquivos analisados
+
+**Fase 2 — Auditoria**
+- [x] Relatório segue o template definido
+- [x] Cada finding tem arquivo e linhas exatos
+- [x] Findings ordenados por severidade
+- [x] 13 findings identificados (≥ 5)
+- [x] Detecção de APIs deprecated incluída (`badCrypto`, `console.log`)
+- [x] Skill pausou e pediu confirmação antes da Fase 3
+
+**Fase 3 — Refatoração**
+- [x] Estrutura de diretórios segue padrão MVC
+- [x] Configuração extraída para módulo de config (sem hardcoded)
+- [x] Models criados para abstrair dados
+- [x] Routes separadas por domínio
+- [x] Controllers concentram o fluxo
+- [x] Error handling centralizado
+- [x] Entry point claro: `src/app.js`
+- [x] Aplicação inicia sem erros
+- [x] Endpoints originais respondem corretamente
+
+#### Projeto 3 — task-manager-api
+
+**Fase 1 — Análise**
+- [x] Linguagem detectada: Python
+- [x] Framework detectado: Flask 3.0.0
+- [x] Domínio: Task Manager API
+- [x] 11 arquivos analisados
+
+**Fase 2 — Auditoria**
+- [x] Relatório segue o template definido
+- [x] Cada finding tem arquivo e linhas exatos
+- [x] Findings ordenados por severidade
+- [x] 13 findings identificados (≥ 5)
+- [x] Detecção de APIs deprecated incluída (MD5, `print`)
+- [x] Skill pausou e pediu confirmação antes da Fase 3
+
+**Fase 3 — Refatoração**
+- [x] Estrutura de diretórios segue padrão MVC
+- [x] Configuração extraída para `src/config/settings.py`
+- [x] Models migrados para `src/models/`
+- [x] Views/Routes separadas em `src/views/`
+- [x] Controllers criados em `src/controllers/`
+- [x] Error handling centralizado em `src/middlewares/error_handler.py`
+- [x] Entry point claro: `python src/app.py`
+- [x] Aplicação inicia sem erros
+- [x] Endpoints originais respondem corretamente
+- [x] Arquivos legados removidos (`app.py`, `models/`, `routes/`, `services/`, `utils/`, `database.py` da raiz)
+
+---
+
+## Como Executar
+
+### Pré-requisitos
+
+- **Claude Code** instalado e configurado (`claude --version` deve responder)
+- Python 3.9+ e `pip` para os projetos Python/Flask
+- Node.js 18+ e `npm` para o projeto Node.js/Express
+
+### Executar a skill em cada projeto
+
+```bash
+# Projeto 1 — code-smells-project (Python/Flask)
+cd code-smells-project
+claude "/refactor-arch"
+
+# Projeto 2 — ecommerce-api-legacy (Node.js/Express)
+cd ../ecommerce-api-legacy
+claude "/refactor-arch"
+
+# Projeto 3 — task-manager-api (Python/Flask)
+cd ../task-manager-api
+claude "/refactor-arch"
+```
+
+A skill pausa após a Fase 2 para revisão do relatório. Digite `y` para confirmar a refatoração (Fase 3).
+
+### Validar a refatoração
+
+#### code-smells-project
+
+```bash
+cd code-smells-project
+pip install -r requirements.txt
+python src/app.py
+# Em outro terminal:
+curl http://localhost:5000/health
+curl http://localhost:5000/produtos
+```
+
+#### ecommerce-api-legacy
+
+```bash
+cd ecommerce-api-legacy
+npm install
+node src/app.js
+# Em outro terminal:
+curl http://localhost:3000/api/courses
+```
+
+#### task-manager-api
+
+```bash
+cd task-manager-api
+pip install -r requirements.txt
+python seed.py       # popula o banco com dados de exemplo
+python src/app.py
+# Em outro terminal:
+curl http://localhost:5000/health
+curl http://localhost:5000/tasks
+curl http://localhost:5000/users
+```
+
+### Relatórios de auditoria
+
+Os relatórios gerados pela Fase 2 estão em:
+
+```
+reports/
+├── audit-project-1.md   # code-smells-project
+├── audit-project-2.md   # ecommerce-api-legacy
+└── audit-project-3.md   # task-manager-api
+```
+
+---
+
 ## Dicas Finais
 
 - **Comece pela análise manual** — entender os problemas profundamente é essencial para criar uma skill que os detecte.

@@ -75,14 +75,22 @@ Use `05-refactoring-playbook.md` for concrete transformation patterns with befor
 1. **Create MVC directory structure** as defined in `04-mvc-guidelines.md`
 2. **Migrate code** applying transformations from `05-refactoring-playbook.md` for each finding
 3. **Preserve all existing functionality** — every original endpoint must continue to work
-4. **Remove original monolithic files** only after all new files are verified
+4. **Remove legacy files** after all new files are verified:
+   - Delete every source file that existed before the refactor and whose contents have been fully migrated to the new MVC structure (e.g., the root-level `app.py`, `models/`, `services/`, `routes/`, `utils/` if replaced by `src/`).
+   - Never delete `requirements.txt`, `package.json`, seed scripts, database files, `.env`, or any non-source asset.
+   - If a file cannot be safely removed (e.g., it imports something not yet migrated), report the blocker and stop; do NOT leave the file in place silently.
+5. **Update the project README** after legacy removal:
+   - Replace any `python app.py` / `node app.js` instructions with the new entry point (e.g., `python src/app.py` or `node src/index.js`).
+   - Update the directory tree in the README to reflect the post-refactor structure.
+   - Preserve the seed/setup instructions.
 
 ### Validation:
 
 After refactoring, validate:
-1. Run `python app.py` or `node src/app.js` (depending on stack) and confirm it boots without errors
+1. Run the new entry point (`python src/app.py` or `node src/app.js`) and confirm it boots without errors
 2. Verify that all original endpoints are still registered and respond correctly
-3. Check that zero critical anti-patterns remain
+3. Confirm legacy source files are no longer present in the project root or their original locations
+4. Check that zero critical anti-patterns remain
 
 Print the final summary:
 
@@ -92,6 +100,12 @@ PHASE 3: REFACTORING COMPLETE
 ================================
 ## New Project Structure
 <tree of new directory structure>
+
+## Legacy Files Removed
+<list of deleted files>
+
+## README Updated
+  ✓ Entry point updated to <new entry point>
 
 ## Validation
   ✓ Application boots without errors
