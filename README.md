@@ -505,10 +505,22 @@ O `SKILL.md` define três fases sequenciais obrigatórias com comportamento expl
 | Arquivo | Conteúdo |
 |---|---|
 | `01-project-analysis.md` | Heurísticas de detecção: extensão de arquivo → linguagem, `requirements.txt`/`package.json` → framework e versão, schema SQLite/SQL → tabelas, contagem de imports → domínio. |
-| `02-antipatterns-catalog.md` | 13 anti-patterns com sinais de detecção linha-a-linha, severidade e recomendação. Inclui detecção de APIs deprecated (MD5 → bcrypt, `print` → `logging`, `cursor.execute(string)` → queries parametrizadas). |
+| `02-antipatterns-catalog.md` | 15 anti-patterns com sinais de detecção linha-a-linha, severidade e recomendação. Inclui detecção de APIs deprecated (MD5 → bcrypt, `print` → `logging`, `cursor.execute(string)` → queries parametrizadas). |
 | `03-report-template.md` | Template de relatório com header padronizado, seção de summary (contagem por severidade) e bloco por finding com campos: severidade, arquivo:linha, descrição, impacto, recomendação. |
 | `04-mvc-guidelines.md` | Estrutura-alvo MVC: `src/config/`, `src/models/`, `src/controllers/`, `src/views/`, `src/services/`, `src/middlewares/` — com responsabilidades definidas por camada e regras de dependência (views não acessam models diretamente). |
-| `05-refactoring-playbook.md` | 10 padrões de transformação com exemplos antes/depois: SECRET_KEY → env var, SQL concatenado → parametrizado, MD5 → bcrypt, `print` → `logging`, lógica inline → service, serialização inline → `to_dict()`, global mutable state → request-scoped, N+1 → JOIN, `badCrypto` → `bcrypt.hash`, DEBUG hardcoded → env var. |
+| `05-refactoring-playbook.md` | 12 padrões Python + 3 padrões Node.js com exemplos antes/depois: SECRET_KEY → env var, SQL concatenado → parametrizado, MD5 → bcrypt, `print` → `logging`, lógica inline → service, serialização inline → `to_dict()`, global mutable state → request-scoped, N+1 raw SQL → JOIN, endpoint arbitrário → remoção, regra de negócio duplicada → service compartilhado, N+1 ORM → `outerjoin+group_by`, error handling centralizado, `badCrypto` → `bcrypt.hash`, `Buffer()` deprecated → `Buffer.from()`, `url.parse` deprecated → `new URL()`, `app.get` monolítico → Express Router por entidade. |
+
+### Anti-patterns incluídos no catálogo e por quê
+
+A seleção partiu dos três projetos analisados manualmente: cada anti-pattern foi incluído porque aparece em pelo menos um dos projetos reais. A distribuição por severidade reflete o impacto observado:
+
+| Severidade | Anti-patterns | Critério de inclusão |
+|---|---|---|
+| **CRITICAL (4)** | SQL Injection, credenciais hardcoded, endpoint de execução arbitrária, dados sensíveis em resposta | Exploráveis remotamente sem autenticação; impacto imediato de confidencialidade ou integridade. Todos os três projetos tinham pelo menos um desses. |
+| **HIGH (4)** | Senha em plaintext/hash fraco, regra de negócio na camada errada, God Object/God Class, estado global mutável | Comprometem segurança ou arquitetura de forma que impede testes e manutenção; exigem refatoração estrutural significativa. |
+| **MEDIUM (4)** | N+1 query, falta de autenticação em rotas, lógica duplicada entre controllers, DEBUG hardcoded | Degradam performance ou qualidade mas não são exploráveis diretamente; detectáveis sem execução. |
+| **LOW (3)** | `print()` em vez de logging, imports não utilizados, magic numbers/strings | Problemas de legibilidade e manutenibilidade; baixo risco imediato mas acumulam dívida técnica. |
+| **Deprecated APIs** | MD5 (`hashlib.md5`), `Buffer()` constructor, `url.parse`, `console.log` como logger | Incluídos porque os três projetos usavam APIs obsoletas como substitute de segurança real (`badCrypto`, MD5) — a detecção dessas é o primeiro passo para descobrir o problema de segurança subjacente. |
 
 ### Agnóstica de tecnologia
 
@@ -657,6 +669,95 @@ A agnósia de tecnologia foi garantida por três decisões de design:
 
 ---
 
+### Logs de execução após refatoração
+
+#### code-smells-project
+
+```
+$ PYTHONPATH=. python app.py
+==================================================
+SERVIDOR INICIADO
+Rodando em http://localhost:5000
+==================================================
+ * Serving Flask app 'app'
+ * Debug mode: off
+ * Running on http://127.0.0.1:5000
+
+$ curl http://localhost:5000/health
+{"counts":{"pedidos":1,"produtos":11,"usuarios":3},"database":"connected","status":"ok","versao":"1.0.0"}
+# HTTP 200 ✓
+
+$ curl http://localhost:5000/produtos
+{"dados":[...],"sucesso":true}
+# HTTP 200 ✓
+
+$ curl http://localhost:5000/usuarios
+{"dados":[...],"sucesso":true}
+# HTTP 200 ✓
+```
+
+#### ecommerce-api-legacy
+
+```
+$ node src/app.js
+{"level":"info","message":{"port":3000},"timestamp":"2026-10-27T23:28:30.683Z"}
+
+$ curl -X POST http://localhost:3000/api/checkout \
+    -H "Content-Type: application/json" \
+    -d '{"userId":1}'
+{"error":"Missing required fields: name, email, courseId, cardNumber"}
+# HTTP 400 ✓ (validação funcionando, endpoint acessível)
+
+$ curl http://localhost:3000/api/admin/financial-report
+{"error":"Unauthorized"}
+# HTTP 401 ✓ (auth middleware protegendo rota sensível)
+
+$ curl -X DELETE http://localhost:3000/api/users/1
+{"error":"Unauthorized"}
+# HTTP 401 ✓ (auth middleware protegendo rota destrutiva)
+```
+
+#### task-manager-api
+
+```
+$ python seed.py
+Seed concluído com sucesso!
+  3 usuários
+  4 categorias
+  10 tasks
+
+$ PYTHONPATH=. python src/app.py
+ * Serving Flask app 'app'
+ * Debug mode: off
+ * Running on http://127.0.0.1:5000
+
+$ curl http://localhost:5000/health
+{"status":"ok","timestamp":"2026-10-27 20:15:29.271628"}
+# HTTP 200 ✓
+
+$ curl http://localhost:5000/tasks
+[{...}, {...}, ...]
+# HTTP 200, 10 tasks ✓
+
+$ curl http://localhost:5000/users
+[{...}, {...}, {...}]
+# HTTP 200, 3 users (sem campo password) ✓
+
+$ curl http://localhost:5000/reports/summary
+{"user_productivity":[...3 rows...],"overdue":{"count":2,...},...}
+# HTTP 200, user_productivity via single outerjoin query ✓
+```
+
+### Observações sobre comportamento da skill em stacks diferentes
+
+**code-smells-project (Python/Flask monolítico):** A Fase 1 identificou corretamente os 4 arquivos e a arquitetura "monolítica" porque todos os imports relevantes estavam concentrados em `models.py` e `controllers.py`. A Fase 3 teve o trabalho mais extenso aqui — precisou decompor um único arquivo de ~350 linhas em 4 camadas MVC distintas. O risco de quebrar funcionalidade era alto; a skill resolveu mantendo a lógica de negócio de desconto no controller e criando models puros que só fazem acesso a dados.
+
+**ecommerce-api-legacy (Node.js/Express):** A única stack JavaScript do conjunto. A Fase 1 adaptou corretamente os sinais de detecção (`package.json` → Express 4.18.2, arquivos `.js`, ausência de `requirements.txt`). A Fase 3 gerou código Node.js idiomático — `require`/`module.exports`, `async/await`, `bcrypt` em vez de `werkzeug`, estrutura de pastas `routes/` em vez de `views/`. O `badCrypto` não tinha equivalente nos projetos Python; a skill o identificou como uma variant local do padrão "hash fraco" graças ao sinal de detecção textual no catálogo (`base64`, loop de 10k iterações).
+
+**task-manager-api (Python/Flask parcialmente organizado):** O projeto mais interessante para a skill. A Fase 1 não podia simplesmente contar arquivos e dizer "monolítico" — havia `models/`, `routes/`, `services/` separados. A skill reconheceu a arquitetura como "parcialmente organizada com problemas internos" e a Fase 2 focou no conteúdo dos arquivos em vez da estrutura de diretórios. A Fase 3 foi a mais cirúrgica: não recriou a estrutura do zero mas elevou cada camada — extraindo `is_overdue` para um service compartilhado, substituindo o N+1 por `outerjoin+group_by`, removendo `password` do `to_dict()`.
+
+---
+
 ## Como Executar
 
 ### Pré-requisitos
@@ -690,7 +791,7 @@ A skill pausa após a Fase 2 para revisão do relatório. Digite `y` para confir
 ```bash
 cd code-smells-project
 pip install -r requirements.txt
-python src/app.py
+PYTHONPATH=. python app.py
 # Em outro terminal:
 curl http://localhost:5000/health
 curl http://localhost:5000/produtos
