@@ -8,19 +8,14 @@ from src.models.user_model import User
 from src.models.category_model import Category
 from src.config.settings import VALID_STATUSES, MIN_TITLE_LENGTH, MAX_TITLE_LENGTH, DEFAULT_PRIORITY
 from src.services.notification_service import notify_task_assigned
+from src.services.task_service import is_overdue
 
 logger = logging.getLogger(__name__)
 
 
-def _is_overdue(task):
-    if task.due_date and task.status not in ('done', 'cancelled'):
-        return task.due_date < datetime.utcnow()
-    return False
-
-
 def _task_to_dict(task, include_relations=True):
     data = task.to_dict()
-    data['overdue'] = _is_overdue(task)
+    data['overdue'] = is_overdue(task)
     if include_relations:
         data['user_name'] = task.user.name if task.user else None
         data['category_name'] = task.category.name if task.category else None
@@ -162,7 +157,7 @@ def search_tasks(query='', status='', priority='', user_id=''):
 def get_task_stats():
     total = Task.query.count()
     done = Task.query.filter_by(status='done').count()
-    overdue_count = sum(1 for t in Task.query.all() if _is_overdue(t))
+    overdue_count = sum(1 for t in Task.query.all() if is_overdue(t))
     return {
         'total': total,
         'pending': Task.query.filter_by(status='pending').count(),

@@ -5,6 +5,7 @@ from src.database import db
 from src.models.user_model import User
 from src.models.task_model import Task
 from src.config.settings import VALID_ROLES, MIN_PASSWORD_LENGTH
+from src.services.task_service import is_overdue, get_user_task_counts
 
 logger = logging.getLogger(__name__)
 
@@ -12,11 +13,12 @@ _EMAIL_RE = re.compile(r'^[a-zA-Z0-9+_.-]+@[a-zA-Z0-9.-]+$')
 
 
 def get_all_users():
+    task_counts = get_user_task_counts()
     users = User.query.all()
     result = []
     for u in users:
         data = u.to_dict()
-        data['task_count'] = Task.query.filter_by(user_id=u.id).count()
+        data['task_count'] = task_counts.get(u.id, 0)
         result.append(data)
     return result
 
@@ -100,16 +102,11 @@ def get_user_tasks(user_id):
     if not user:
         return None, 'User not found'
 
-    from datetime import datetime
     tasks = Task.query.filter_by(user_id=user_id).all()
     result = []
     for t in tasks:
         data = t.to_dict()
-        data['overdue'] = (
-            t.due_date < datetime.utcnow()
-            if t.due_date and t.status not in ('done', 'cancelled')
-            else False
-        )
+        data['overdue'] = is_overdue(t)
         result.append(data)
     return result, None
 

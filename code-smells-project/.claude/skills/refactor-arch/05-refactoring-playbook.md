@@ -447,3 +447,122 @@ module.exports = router;
 const productRoutes = require('./routes/productRoutes');
 app.use('/products', productRoutes);
 ```
+
+---
+
+## Pattern 11: Duplicated Business Rule → Shared Service Function
+
+**Applies to:** Any business rule that appears verbatim in more than one controller/route file (e.g. overdue detection, status validation, priority thresholds).
+
+**Signal:** The same `if`/`elif` block (or helper function) copied across 2+ files. A schema change forces updates in multiple places.
+
+**BEFORE:**
+```python
+# task_controller.py
+def _is_overdue(task):
+    if task.due_date and task.status not in ('done', 'cancelled'):
+        return task.due_date < datetime.utcnow()
+    return False
+
+# report_controller.py  ← identical copy
+def _is_overdue(task):
+    if task.due_date and task.status not in ('done', 'cancelled'):
+        return task.due_date < datetime.utcnow()
+    return False
+
+# user_controller.py  ← inline variant (same logic, no helper)
+data['overdue'] = (
+    t.due_date < datetime.utcnow()
+    if t.due_date and t.status not in ('done', 'cancelled')
+    else False
+)
+```
+
+**AFTER:**
+```python
+# services/task_service.py  ← single source of truth
+from datetime import datetime
+
+def is_overdue(task) -> bool:
+    if task.due_date and task.status not in ('done', 'cancelled'):
+        return task.due_date < datetime.utcnow()
+    return False
+
+# task_controller.py, report_controller.py, user_controller.py
+from src.services.task_service import is_overdue
+
+data['overdue'] = is_overdue(task)
+```
+
+**Rule:** Every time a business rule needs to change (e.g. adding `'archived'` as a terminal status), update one file. All callers inherit the change automatically.
+
+---
+
+## Pattern 12: N+1 with ORM → outerjoin + group_by Aggregation
+
+**Applies to:** Anti-pattern #8 (ORM variant) — any loop that issues one query per parent object to count or aggregate child rows.
+
+**Signal:** `Model.query.all()` followed by `ChildModel.query.filter_by(parent_id=obj.id)` inside a `for` loop.
+
+**BEFORE (Flask-SQLAlchemy):**
+```python
+# 1 query for users + 1 query per user = N+1 total
+users = User.query.all()
+user_stats = []
+for u in users:
+    user_tasks = Task.query.filter_by(user_id=u.id).all()   # ← N extra queries
+    total = len(user_tasks)
+    completed = sum(1 for t in user_tasks if t.status == 'done')
+    user_stats.append({
+        'user_id': u.id,
+        'total_tasks': total,
+        'completed_tasks': completed,
+    })
+```
+
+**AFTER:**
+```python
+from sqlalchemy import func
+from src.database import db
+
+# Single query: LEFT JOIN + GROUP BY + conditional aggregation
+rows = (
+    db.session.query(
+        User.id,
+        User.name,
+        func.count(Task.id).label('total'),
+        func.sum(db.case((Task.status == 'done', 1), else_=0)).label('done'),
+    )
+    .outerjoin(Task, Task.user_id == User.id)
+    .group_by(User.id, User.name)
+    .all()
+)
+
+user_stats = []
+for row in rows:
+    total = row.total or 0
+    done = row.done or 0
+    user_stats.append({
+        'user_id': row.id,
+        'user_name': row.name,
+        'total_tasks': total,
+        'completed_tasks': done,
+        'completion_rate': round((done / total) * 100, 2) if total > 0 else 0,
+    })
+```
+
+**For counting only (simpler case):**
+```python
+# Get user_id → task_count map in one query
+rows = (
+    db.session.query(User.id, func.count(Task.id).label('task_count'))
+    .outerjoin(Task, Task.user_id == User.id)
+    .group_by(User.id)
+    .all()
+)
+task_counts = {row.id: row.task_count for row in rows}
+
+# Use dict lookup — zero extra queries
+for u in users:
+    data['task_count'] = task_counts.get(u.id, 0)
+```

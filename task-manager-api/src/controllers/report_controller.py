@@ -5,14 +5,9 @@ from src.database import db
 from src.models.task_model import Task
 from src.models.user_model import User
 from src.models.category_model import Category
+from src.services.task_service import is_overdue, get_user_productivity_stats
 
 logger = logging.getLogger(__name__)
-
-
-def _is_overdue(task):
-    if task.due_date and task.status not in ('done', 'cancelled'):
-        return task.due_date < datetime.utcnow()
-    return False
 
 
 def get_summary_report():
@@ -23,7 +18,7 @@ def get_summary_report():
     all_tasks = Task.query.all()
     overdue_list = []
     for t in all_tasks:
-        if _is_overdue(t):
+        if is_overdue(t):
             overdue_list.append({
                 'id': t.id,
                 'title': t.title,
@@ -32,20 +27,7 @@ def get_summary_report():
             })
 
     seven_days_ago = datetime.utcnow() - timedelta(days=7)
-
-    users = User.query.all()
-    user_stats = []
-    for u in users:
-        user_tasks = Task.query.filter_by(user_id=u.id).all()
-        total = len(user_tasks)
-        completed = sum(1 for t in user_tasks if t.status == 'done')
-        user_stats.append({
-            'user_id': u.id,
-            'user_name': u.name,
-            'total_tasks': total,
-            'completed_tasks': completed,
-            'completion_rate': round((completed / total) * 100, 2) if total > 0 else 0,
-        })
+    user_stats = get_user_productivity_stats()
 
     done = Task.query.filter_by(status='done').count()
     return {
@@ -102,7 +84,7 @@ def get_user_report(user_id):
             cancelled += 1
         if t.priority <= 2:
             high_priority += 1
-        if _is_overdue(t):
+        if is_overdue(t):
             overdue += 1
 
     return {
@@ -118,3 +100,4 @@ def get_user_report(user_id):
             'completion_rate': round((done / total) * 100, 2) if total > 0 else 0,
         },
     }, None
+

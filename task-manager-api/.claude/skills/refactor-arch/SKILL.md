@@ -90,7 +90,13 @@ After refactoring, validate:
 1. Run the new entry point (`python src/app.py` or `node src/app.js`) and confirm it boots without errors
 2. Verify that all original endpoints are still registered and respond correctly
 3. Confirm legacy source files are no longer present in the project root or their original locations
-4. Check that zero critical anti-patterns remain
+4. **Verify every CRITICAL and HIGH finding from Phase 2 is resolved** — for each one, open the relevant file(s) in the new structure and confirm the specific code pattern is gone:
+   - Hardcoded secret/credential → must now read from `os.environ` or `process.env`
+   - Weak hash (MD5, `badCrypto`) → must now use bcrypt/scrypt equivalent
+   - Sensitive field in API response (password) → must be absent from `to_dict()` and all serializers
+   - Duplicated business rule → must exist in exactly one shared service; controllers must import and call it
+   - N+1 query inside a loop → the loop must be replaced with a single aggregated query (JOIN + group_by or equivalent)
+   - If the finding is still present, fix it before proceeding — do NOT report "zero anti-patterns" with open HIGH/CRITICAL items.
 
 Print the final summary:
 
@@ -107,10 +113,13 @@ PHASE 3: REFACTORING COMPLETE
 ## README Updated
   ✓ Entry point updated to <new entry point>
 
+## CRITICAL/HIGH Findings Verified
+<for each CRITICAL/HIGH finding: ✓ <finding title> — resolved in <file:line>>
+
 ## Validation
   ✓ Application boots without errors
   ✓ All endpoints respond correctly
-  ✓ Zero anti-patterns remaining
+  ✓ Zero CRITICAL/HIGH anti-patterns remaining
 ================================
 ```
 

@@ -1,8 +1,9 @@
 """Script para popular o banco com dados iniciais"""
-from app import app, db
-from models.task import Task
-from models.user import User
-from models.category import Category
+from src.app import app
+from src.database import db
+from src.models.task_model import Task
+from src.models.user_model import User
+from src.models.category_model import Category
 from datetime import datetime, timedelta
 
 def seed_data():
