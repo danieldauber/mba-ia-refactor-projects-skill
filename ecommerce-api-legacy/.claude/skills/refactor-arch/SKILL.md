@@ -91,12 +91,13 @@ After refactoring, validate:
 2. Verify that all original endpoints are still registered and respond correctly
 3. Confirm legacy source files are no longer present in the project root or their original locations
 4. **Verify every CRITICAL and HIGH finding from Phase 2 is resolved** — for each one, open the relevant file(s) in the new structure and confirm the specific code pattern is gone:
-   - Hardcoded secret/credential → must now read from `os.environ` or `process.env`
+   - Hardcoded secret/credential → must now read from `os.environ` or `process.env` **with no fallback string**. A `|| 'change-me'` default is itself a known credential — replace with a fail-fast guard that calls `process.exit(1)` / `sys.exit(1)` if the variable is absent.
    - Weak hash (MD5, `badCrypto`) → must now use bcrypt/scrypt equivalent
    - Sensitive field in API response (password) → must be absent from `to_dict()` and all serializers
    - Duplicated business rule → must exist in exactly one shared service; controllers must import and call it
    - N+1 query inside a loop → the loop must be replaced with a single aggregated query (JOIN + group_by or equivalent)
    - If the finding is still present, fix it before proceeding — do NOT report "zero anti-patterns" with open HIGH/CRITICAL items.
+5. **Verify no security-sensitive config has a known-string fallback** — grep the config file for patterns like `|| '...'` (JS) or `os.environ.get("...", "...")` (Python) on variables that hold secrets. Any such pattern is a residual CRITICAL regardless of whether the original finding was listed explicitly.
 
 Print the final summary:
 

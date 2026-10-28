@@ -52,15 +52,44 @@ src/
 ## Layer Responsibilities
 
 ### Config (`config/settings.py`)
-- Reads ALL configuration from environment variables with sensible defaults
+- Reads ALL configuration from environment variables
 - Exports constants used by other layers
 - **MUST NOT** import from any other layer
+- **Security-sensitive variables (secrets, API keys) MUST use fail-fast — no fallback value.** The app must refuse to start if they are absent, not silently use a known default that becomes a backdoor.
+- Non-secret configuration (ports, paths, feature flags) may have safe defaults.
 - Example:
   ```python
-  import os
-  SECRET_KEY = os.environ.get("SECRET_KEY", "change-me-in-production")
+  import os, sys
+
+  def _require(name):
+      v = os.environ.get(name)
+      if not v:
+          print(f"[FATAL] Required env var not set: {name}", file=sys.stderr)
+          sys.exit(1)
+      return v
+
+  # Required secrets — boot fails if missing:
+  SECRET_KEY = _require("SECRET_KEY")
+
+  # Non-secret config — safe defaults allowed:
   DB_PATH = os.environ.get("DB_PATH", "app.db")
   DEBUG = os.environ.get("DEBUG", "false").lower() == "true"
+  ```
+
+  Node.js equivalent:
+  ```javascript
+  // config/settings.js
+  const REQUIRED = ['JWT_SECRET'];
+  const missing = REQUIRED.filter((k) => !process.env[k]);
+  if (missing.length > 0) {
+      console.error(`[FATAL] Missing required env vars: ${missing.join(', ')}`);
+      process.exit(1);
+  }
+  const settings = {
+      jwtSecret: process.env.JWT_SECRET,   // no fallback
+      port: parseInt(process.env.PORT, 10) || 3000,
+  };
+  module.exports = settings;
   ```
 
 ### Models (`models/<entity>_model.py`)
@@ -150,3 +179,4 @@ src/
 5. Passwords are ALWAYS hashed before storage
 6. All SQL uses parameterized queries — no string concatenation
 7. No global mutable state for DB connections — use per-request or pooled connections
+8. **Security-sensitive env vars (SECRET_KEY, JWT_SECRET, API keys, SMTP passwords) MUST fail-fast — no fallback string.** A `|| 'change-me-in-production'` default is itself a known credential: anyone who reads the source can authenticate. Only non-secret config (port, debug flag, file paths) may have defaults.

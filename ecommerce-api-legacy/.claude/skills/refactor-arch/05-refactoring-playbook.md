@@ -41,7 +41,7 @@ cursor.execute(query, params)
 
 ---
 
-## Pattern 2: Hardcoded Secrets → Environment Variables
+## Pattern 2: Hardcoded Secrets → Environment Variables (fail-fast, no defaults)
 
 **Applies to:** Anti-pattern #2
 
@@ -52,18 +52,57 @@ app.config["SECRET_KEY"] = "minha-chave-super-secreta-123"
 app.config["DEBUG"] = True
 ```
 
-**AFTER:**
+```javascript
+// config/settings.js  ← WRONG: default value leaks the secret via source code
+const settings = {
+    jwtSecret: process.env.JWT_SECRET || 'change-me-in-production',
+};
+```
+
+**AFTER (Python):**
 ```python
 # config/settings.py
 import os
-SECRET_KEY = os.environ.get("SECRET_KEY", "change-me-in-production")
+import sys
+
+def _require(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        print(f"[FATAL] Missing required environment variable: {name}", file=sys.stderr)
+        sys.exit(1)
+    return value
+
+# Required — app will NOT start if missing:
+SECRET_KEY = _require("SECRET_KEY")
+
+# Optional with safe defaults (non-secret configuration only):
 DEBUG = os.environ.get("DEBUG", "false").lower() == "true"
+DB_PATH = os.environ.get("DB_PATH", "app.db")
 
 # app.py
 from config.settings import SECRET_KEY, DEBUG
 app.config["SECRET_KEY"] = SECRET_KEY
 app.config["DEBUG"] = DEBUG
 ```
+
+**AFTER (Node.js):**
+```javascript
+// config/settings.js
+const REQUIRED = ['JWT_SECRET'];
+const missing = REQUIRED.filter((k) => !process.env[k]);
+if (missing.length > 0) {
+    console.error(`[FATAL] Missing required environment variables: ${missing.join(', ')}`);
+    process.exit(1);
+}
+
+const settings = {
+    port: parseInt(process.env.PORT, 10) || 3000,
+    jwtSecret: process.env.JWT_SECRET,   // no fallback — absence already caught above
+};
+module.exports = settings;
+```
+
+**Why no fallback for secrets:** A default like `'change-me-in-production'` is still a known, valid string. Any auth middleware that compares a token against `settings.jwtSecret` will accept that string as a valid credential — anyone who reads the source can authenticate. The only safe default for a required secret is no default: crash on startup, forcing operators to set it explicitly.
 
 ---
 
